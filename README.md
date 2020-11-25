@@ -1,0 +1,2 @@
+# python_useful_function
+pythonの局所的に使えそうなコード置き場

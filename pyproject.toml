@@ -1,16 +1,14 @@
-[tool.poetry]
+[project]
 name = "python-useful-function"
 version = "0.1.0"
 description = ""
-authors = ["himihiromu <himihiromu@icloud.com>"]
+authors = [{ name = "himihiromu", email = "himihiromu@icloud.com" }]
+requires-python = "~=3.13"
 readme = "README.md"
+dependencies = [
+    "boto3>=1.0.0",
+    "xlrd>=2.0.0",
+    "sqlalchemy>=2.0.0",
+    "pypdf>=6.0.0",
+]
 
-[tool.poetry.dependencies]
-python = "^3.12"
-xlrd = "^2.0.1"
-boto3 = "^1.35.29"
-
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"

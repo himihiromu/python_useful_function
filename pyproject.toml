@@ -3,12 +3,14 @@ name = "python-useful-function"
 version = "0.1.0"
 description = ""
 authors = [{ name = "himihiromu", email = "himihiromu@icloud.com" }]
-requires-python = "~=3.13"
+requires-python = "~=3.13.6"
 readme = "README.md"
 dependencies = [
     "boto3>=1.0.0",
     "xlrd>=2.0.0",
     "sqlalchemy>=2.0.0",
     "pypdf>=6.0.0",
+    "requests>=2.32.4",
+    "mecab-python3>=1.0.10",
 ]
 

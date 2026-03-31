@@ -12,9 +12,11 @@ import os
 import json
 import time
 import wave
+import struct
+import io
 from pathlib import Path
 import requests
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import argparse
 import re
 
@@ -168,7 +170,69 @@ def list_speakers():
     
     print("\n使用例: python text_to_voicevox.py ./texts -s zundamon_normal")
 
-def text_to_speech(text: str, speaker_id: int, output_path: str, speed: float = 1.0, pitch: float = 0.0) -> bool:
+def combine_wav_files(wav_data_list: List[bytes]) -> bytes:
+    """
+    複数のWAVファイルデータを適切に結合
+    
+    Args:
+        wav_data_list: WAVファイルのバイトデータのリスト
+    
+    Returns:
+        結合されたWAVファイルのバイトデータ
+    """
+    if not wav_data_list:
+        return b''
+    
+    if len(wav_data_list) == 1:
+        return wav_data_list[0]
+    
+    # すべてのWAVファイルの情報を収集
+    all_frames = []
+    base_params = None
+    
+    for i, wav_data in enumerate(wav_data_list):
+        try:
+            with io.BytesIO(wav_data) as wav_io:
+                with wave.open(wav_io, 'rb') as wav:
+                    if base_params is None:
+                        base_params = wav.getparams()
+                    
+                    current_params = wav.getparams()
+                    # パラメータの詳細を出力
+                    if i == 0:
+                        print(f"    基準フォーマット: ch={base_params.nchannels}, "
+                              f"width={base_params.sampwidth}bytes, rate={base_params.framerate}Hz")
+                    
+                    # フレームデータを読み込み
+                    frame_data = wav.readframes(wav.getnframes())
+                    all_frames.append(frame_data)
+                    
+        except Exception as e:
+            print(f"  ⚠ パート {i+1} の読み込みエラー: {e}")
+            continue
+    
+    if not all_frames or base_params is None:
+        print("  ⚠ 有効な音声データがありません")
+        return wav_data_list[0] if wav_data_list else b''
+    
+    # 結合したWAVファイルを作成
+    try:
+        output_io = io.BytesIO()
+        with wave.open(output_io, 'wb') as output_wav:
+            output_wav.setparams(base_params)
+            # すべてのフレームを結合して書き込み
+            combined_frames = b''.join(all_frames)
+            output_wav.writeframes(combined_frames)
+        
+        result = output_io.getvalue()
+        print(f"    ✓ {len(all_frames)} パートを結合完了")
+        return result
+        
+    except Exception as e:
+        print(f"  ⚠ 結合エラー: {e}")
+        return wav_data_list[0] if wav_data_list else b''
+
+def text_to_speech(text: str, speaker_id: int, output_path: str, speed: float = 1.0, pitch: float = 0.0, max_length: int = 200) -> bool:
     """
     テキストを音声ファイルに変換
     
@@ -178,13 +242,13 @@ def text_to_speech(text: str, speaker_id: int, output_path: str, speed: float = 
         output_path: 出力ファイルパス
         speed: 話速（0.5〜2.0）
         pitch: 音高（-0.15〜0.15）
+        max_length: 一度に処理する最大文字数
     
     Returns:
         成功時True、失敗時False
     """
     try:
         # テキストを分割（長すぎる場合）
-        max_length = 200  # 文字数制限
         text_parts = []
         
         if len(text) <= max_length:
@@ -234,6 +298,11 @@ def text_to_speech(text: str, speaker_id: int, output_path: str, speed: float = 
             query["speedScale"] = speed
             query["pitchScale"] = pitch
             
+            # 音声フォーマットを統一（サンプリングレートなど）
+            # VOICEVOXのデフォルト設定を明示的に指定
+            query["outputSamplingRate"] = 24000  # 24kHz固定
+            query["outputStereo"] = False  # モノラル固定
+            
             # 音声合成
             synthesis_response = requests.post(
                 f"{VOICEVOX_HOST}/synthesis",
@@ -247,22 +316,26 @@ def text_to_speech(text: str, speaker_id: int, output_path: str, speed: float = 
                 continue
             
             audio_data_list.append(synthesis_response.content)
+            
+            # デバッグ情報：生成された音声の長さを表示
+            print(f"    ✓ パート {i+1}/{len(text_parts)}: {len(part)} 文字を変換")
         
         if not audio_data_list:
+            print("  ✗ 音声データが生成されませんでした")
             return False
         
+        print(f"  ✓ {len(audio_data_list)} 個の音声パートを生成しました")
+        
         # 音声データを結合して保存
-        with open(output_path, "wb") as f:
-            if len(audio_data_list) == 1:
-                f.write(audio_data_list[0])
-            else:
-                # 複数の音声データを結合（簡易的な結合）
-                for i, audio_data in enumerate(audio_data_list):
-                    if i == 0:
-                        f.write(audio_data)
-                    else:
-                        # WAVヘッダーをスキップして追加
-                        f.write(audio_data[44:])  # WAVヘッダーは44バイト
+        print(f"  音声データを結合中...")
+        combined_audio = combine_wav_files(audio_data_list)
+        if combined_audio:
+            with open(output_path, "wb") as f:
+                f.write(combined_audio)
+            print(f"  ✓ 音声ファイルを保存しました: {output_path}")
+        else:
+            print(f"  ✗ 音声データの結合に失敗しました")
+            return False
         
         return True
         
@@ -270,7 +343,7 @@ def text_to_speech(text: str, speaker_id: int, output_path: str, speed: float = 
         print(f"  ✗ エラー: {e}")
         return False
 
-def process_text_file(file_path: Path, output_dir: Path, speaker_id: int, speed: float, pitch: float) -> bool:
+def process_text_file(file_path: Path, output_dir: Path, speaker_id: int, speed: float, pitch: float, max_length: int = 200) -> bool:
     """
     テキストファイルを音声ファイルに変換
     
@@ -280,6 +353,7 @@ def process_text_file(file_path: Path, output_dir: Path, speaker_id: int, speed:
         speaker_id: スピーカーID
         speed: 話速
         pitch: 音高
+        max_length: 一度に処理する最大文字数
     
     Returns:
         成功時True、失敗時False
@@ -316,7 +390,7 @@ def process_text_file(file_path: Path, output_dir: Path, speaker_id: int, speed:
         print(f"  処理中: {file_path.name} → {output_file.name}")
         
         # 音声変換
-        success = text_to_speech(text, speaker_id, str(output_file), speed, pitch)
+        success = text_to_speech(text, speaker_id, str(output_file), speed, pitch, max_length)
         
         if success:
             print(f"    ✓ 完了: {output_file.name}")
@@ -358,6 +432,7 @@ def main():
     parser.add_argument("-o", "--output", help="出力ディレクトリ（デフォルト: input_path_voices）")
     parser.add_argument("--speed", type=float, default=1.0, help="話速（0.5〜2.0、デフォルト: 1.0）")
     parser.add_argument("--pitch", type=float, default=0.0, help="音高（-0.15〜0.15、デフォルト: 0.0）")
+    parser.add_argument("--max-length", type=int, default=200, help="一度に処理する最大文字数（デフォルト: 200）")
     parser.add_argument("--list", action="store_true", help="利用可能なスピーカー一覧を表示")
     parser.add_argument("--host", default="http://127.0.0.1:50021", help="VOICEVOXサーバーのURL")
     
@@ -443,8 +518,14 @@ def main():
     
     # 各ファイルを処理
     success_count = 0
+    max_length = args.max_length
+    
+    print(f"最大文字数制限: {max_length} 文字")
+    if max_length > 500:
+        print("警告: 文字数制限が大きすぎると、VOICEVOXのAPIでエラーが発生する可能性があります")
+    
     for text_file in text_files:
-        if process_text_file(text_file, output_dir, speaker_id, speed, pitch):
+        if process_text_file(text_file, output_dir, speaker_id, speed, pitch, max_length):
             success_count += 1
         time.sleep(0.5)  # サーバー負荷軽減のため少し待機
     
